@@ -30,7 +30,7 @@
       "value": "yes"
     },
     "userEmailId": {
-      "value": "GET-USER-EMAIL"
+      "value": "GET-USER-EMAIL-ID"
     },
     "demoUserPassword": {
       "value": "GEN-PASSWORD"
