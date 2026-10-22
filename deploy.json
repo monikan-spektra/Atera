@@ -1,0 +1,581 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Atera POC - CloudLabs dedicated-tenant environment: 1 Windows endpoint VM (Teams, printer, Atera agent hook) + 1 lightweight Linux VM acting as a network printer. Tenant setup (users, groups, license, service principal) runs from the Windows VM custom script."
+  },
+  "parameters": {
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "labuser"
+    },
+    "adminPassword": {
+      "type": "securestring"
+    },
+    "AzureUserName": {
+      "type": "string",
+      "metadata": {
+        "description": "Dedicated tenant admin UPN (CloudLabs: GET-AZUSER-UPN)"
+      }
+    },
+    "AzurePassword": {
+      "type": "securestring"
+    },
+    "ODLID": {
+      "type": "string"
+    },
+    "DeploymentID": {
+      "type": "string"
+    },
+    "trainerUserName": {
+      "type": "string",
+      "defaultValue": "trainer"
+    },
+    "trainerUserPassword": {
+      "type": "securestring"
+    },
+    "InstallCloudLabsShadow": {
+      "type": "string",
+      "defaultValue": "yes"
+    },
+    "userEmailId": {
+      "type": "string"
+    },
+    "demoUserAlias": {
+      "type": "string",
+      "defaultValue": "atera1",
+      "metadata": {
+        "description": "Alias of the single licensed (M365/Teams) demo user"
+      }
+    },
+    "demoUserPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Password for the licensed demo user and the 5 dummy users"
+      }
+    },
+    "dummyUserCount": {
+      "type": "int",
+      "defaultValue": 5,
+      "minValue": 1,
+      "maxValue": 10
+    },
+    "graphAppPermissions": {
+      "type": "string",
+      "defaultValue": "User.Read.All,Group.Read.All,Directory.Read.All,Device.Read.All,Organization.Read.All",
+      "metadata": {
+        "description": "Comma-separated Microsoft Graph APPLICATION permissions granted (admin-consented) to the Atera integration service principal. CONFIRM WITH ATERA."
+      }
+    },
+    "assignGlobalAdminToSP": {
+      "type": "string",
+      "defaultValue": "false",
+      "allowedValues": [
+        "true",
+        "false"
+      ]
+    },
+
+    "ateraInstallerUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Per-tenant Atera agent MSI URL (from Atera's provisioning endpoint). Leave empty to skip agent install."
+      }
+    },
+    "ateraMsiArguments": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Extra msiexec properties, e.g. IntegratorLogin=x CompanyId=1 AccountId=abc"
+      }
+    },
+
+    "windowsVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v5"
+    },
+    "linuxVmSize": {
+      "type": "string",
+      "defaultValue": "Standard_B1ms"
+    },
+    "printerName": {
+      "type": "string",
+      "defaultValue": "AteraDemoPrinter"
+    },
+    "scriptBaseUri": {
+      "type": "string",
+      "defaultValue": "https://experienceazure.blob.core.windows.net/templates/pre-sales/atera/"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    }
+  },
+
+  "variables": {
+    "tenantDomain": "[split(parameters('AzureUserName'), '@')[1]]",
+    "demoUserUpn": "[concat(parameters('demoUserAlias'), '@', variables('tenantDomain'))]",
+
+    "winVmName": "[concat('winvm-', parameters('DeploymentID'))]",
+    "linVmName": "[concat('prnvm-', parameters('DeploymentID'))]",
+
+    "winNicName": "[concat(variables('winVmName'), '-nic')]",
+    "linNicName": "[concat(variables('linVmName'), '-nic')]",
+
+    "winPipName": "[concat('winvmip', uniqueString(resourceGroup().id, parameters('DeploymentID')))]",
+    "linPipName": "[concat('prnvmip', uniqueString(resourceGroup().id, parameters('DeploymentID')))]",
+
+    "winNsgName": "[concat('winvm-nsg-', parameters('DeploymentID'))]",
+    "linNsgName": "[concat('prnvm-nsg-', parameters('DeploymentID'))]",
+
+    "vnetName": "[concat('vnet-', parameters('DeploymentID'))]",
+    "subnetName": "subnet",
+    "vnetPrefix": "10.0.0.0/16",
+    "subnetPrefix": "10.0.0.0/24",
+    "linuxPrivateIp": "10.0.0.10",
+
+    "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('subnetName'))]",
+
+    "cloudlabsCommon": "[concat(' -AzureUserName ', parameters('AzureUserName'), ' -AzurePassword ', parameters('AzurePassword'), ' -AzureTenantID ', subscription().tenantId, ' -AzureSubscriptionID ', subscription().subscriptionId, ' -ODLID ', parameters('ODLID'), ' -DeploymentID ', parameters('DeploymentID'), ' -InstallCloudLabsShadow ', parameters('InstallCloudLabsShadow'))]",
+
+    "shadowArgs": "[concat(' -vmAdminUsername ', parameters('adminUsername'), ' -trainerUserName ', parameters('trainerUserName'), ' -trainerUserPassword ', parameters('trainerUserPassword'))]",
+
+    "printerArgs": "[concat(' -LinuxPrinterIP ', variables('linuxPrivateIp'), ' -PrinterName ', parameters('printerName'))]",
+
+    "ateraAgentArgs": "[concat(if(empty(parameters('ateraInstallerUrl')), '', concat(' -AteraInstallerUrl \"', parameters('ateraInstallerUrl'), '\"')), if(empty(parameters('ateraMsiArguments')), '', concat(' -AteraMsiArguments \"', parameters('ateraMsiArguments'), '\"')))]"
+  },
+
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "pid-e843308b-3ce2-42a2-b743-2f21b36a5e68",
+      "properties": {
+        "mode": "Incremental",
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "resources": []
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[variables('vnetPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[variables('subnetName')]",
+            "properties": {
+              "addressPrefix": "[variables('subnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('winNsgName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-RDP",
+            "properties": {
+              "priority": 1000,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "3389"
+            }
+          }
+        ]
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('linNsgName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-SSH",
+            "properties": {
+              "priority": 110,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "22"
+            }
+          },
+          {
+            "name": "Allow-Printing-From-VNet",
+            "properties": {
+              "priority": 120,
+              "protocol": "Tcp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRanges": [
+                "631",
+                "9100"
+              ]
+            }
+          },
+          {
+            "name": "Allow-SNMP-From-VNet",
+            "properties": {
+              "priority": 130,
+              "protocol": "Udp",
+              "access": "Allow",
+              "direction": "Inbound",
+              "sourceAddressPrefix": "VirtualNetwork",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "161"
+            }
+          }
+        ]
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('winPipName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      },
+      "properties": {
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('winPipName')]"
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('linPipName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Regional"
+      },
+      "properties": {
+        "publicIPAddressVersion": "IPv4",
+        "publicIPAllocationMethod": "Static",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('linPipName')]"
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('winNicName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('winPipName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('winNsgName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              },
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('winPipName'))]"
+              }
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('winNsgName'))]"
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('linNicName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('linPipName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('linNsgName'))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              },
+              "privateIPAllocationMethod": "Static",
+              "privateIPAddress": "[variables('linuxPrivateIp')]",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('linPipName'))]"
+              }
+            }
+          }
+        ],
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('linNsgName'))]"
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('linVmName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('linNicName'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('linuxVmSize')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "canonical",
+            "offer": "ubuntu-24_04-lts",
+            "sku": "server",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(variables('linVmName'), '-osdisk')]",
+            "createOption": "FromImage",
+            "diskSizeGB": 30,
+            "managedDisk": {
+              "storageAccountType": "StandardSSD_LRS"
+            }
+          }
+        },
+        "osProfile": {
+          "computerName": "[variables('linVmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": false,
+            "patchSettings": {
+              "patchMode": "ImageDefault"
+            }
+          }
+        },
+        "securityProfile": {
+          "securityType": "TrustedLaunch",
+          "uefiSettings": {
+            "secureBootEnabled": true,
+            "vTpmEnabled": true
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('linNicName'))]"
+            }
+          ]
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "2024-03-01",
+      "name": "[concat(variables('linVmName'), '/printer-setup')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('linVmName'))]"
+      ],
+      "properties": {
+        "publisher": "Microsoft.Azure.Extensions",
+        "type": "CustomScript",
+        "typeHandlerVersion": "2.1",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+          "fileUris": [
+            "[concat(parameters('scriptBaseUri'), 'linux-printer-setup.sh')]",
+            "[concat(parameters('scriptBaseUri'), 'validate-printer.sh')]"
+          ]
+        },
+        "protectedSettings": {
+          "commandToExecute": "[concat('bash linux-printer-setup.sh \"', parameters('printerName'), '\" \"', variables('vnetPrefix'), '\"')]"
+        }
+      }
+    },
+
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-03-01",
+      "name": "[variables('winVmName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('winNicName'))]"
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('windowsVmSize')]"
+        },
+        "storageProfile": {
+           "imageReference": {
+           "publisher": "MicrosoftWindowsDesktop",
+           "offer": "windows-11",
+          "sku": "win11-23h2-ent",
+          "version": "latest"
+        },
+          "osDisk": {
+            "name": "[concat(variables('winVmName'), '-osdisk')]",
+            "createOption": "FromImage",
+            "managedDisk": {
+              "storageAccountType": "StandardSSD_LRS"
+            }
+          },
+          "dataDisks": []
+        },
+        "osProfile": {
+          "computerName": "[take(variables('winVmName'), 15)]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "windowsConfiguration": {
+            "provisionVMAgent": true,
+            "enableAutomaticUpdates": true
+          }
+        },
+        "securityProfile": {
+          "securityType": "TrustedLaunch",
+          "uefiSettings": {
+            "secureBootEnabled": true,
+            "vTpmEnabled": true
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('winNicName'))]"
+            }
+          ]
+        }
+       }
+      },
+    {
+  "type": "Microsoft.Compute/virtualMachines/extensions",
+  "apiVersion": "2024-03-01",
+  "name": "[concat(variables('winVmName'), '/atera-poc-setup')]",
+  "location": "[parameters('location')]",
+  "dependsOn": [
+    "[resourceId('Microsoft.Compute/virtualMachines', variables('winVmName'))]",
+    "[resourceId('Microsoft.Compute/virtualMachines/extensions', variables('linVmName'), 'printer-setup')]"
+  ],
+  "properties": {
+    "publisher": "Microsoft.Compute",
+    "type": "CustomScriptExtension",
+    "typeHandlerVersion": "1.10",
+    "autoUpgradeMinorVersion": true,
+    "settings": {
+      "fileUris": [
+        "[concat(parameters('scriptBaseUri'), 'psscipt.ps1')]",
+        "https://experienceazure.blob.core.windows.net/templates/cloudlabs-common/cloudlabs-windows-functions.ps1"
+      ]
+    },
+    "protectedSettings": {
+      "commandToExecute": "[concat('powershell.exe -ExecutionPolicy Unrestricted -File pre-sales/atera/psscipt.ps1', variables('cloudlabsCommon'), variables('shadowArgs'))]"
+    }
+  }
+}
+  ],
+
+  "outputs": {
+    "DeploymentID": {
+      "type": "string",
+      "value": "[parameters('DeploymentID')]"
+    },
+    "Tenant ID": {
+      "type": "string",
+      "value": "[subscription().tenantId]"
+    },
+    "Tenant Domain": {
+      "type": "string",
+      "value": "[variables('tenantDomain')]"
+    },
+    "Tenant Admin Username": {
+      "type": "string",
+      "value": "[parameters('AzureUserName')]"
+    },
+    "Demo User Username": {
+      "type": "string",
+      "value": "[variables('demoUserUpn')]"
+    },
+    "Demo User Password": {
+      "type": "string",
+      "value": "[parameters('demoUserPassword')]"
+    },
+    "Windows VM DNS Name": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('winPipName'))).dnsSettings.fqdn]"
+    },
+    "Windows VM Admin Username": {
+      "type": "string",
+      "value": "[parameters('adminUsername')]"
+    },
+    "Windows VM Admin Password": {
+      "type": "string",
+      "value": "[parameters('adminPassword')]"
+    },
+    "Printer VM DNS Name": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('linPipName'))).dnsSettings.fqdn]"
+    },
+    "Printer VM Private IP": {
+      "type": "string",
+      "value": "[variables('linuxPrivateIp')]"
+    },
+    "Printer VM Admin Username": {
+      "type": "string",
+      "value": "[parameters('adminUsername')]"
+    },
+    "Printer VM Admin Password": {
+      "type": "string",
+      "value": "[parameters('adminPassword')]"
+    },
+    "userEmailID": {
+      "type": "string",
+      "value": "[parameters('userEmailId')]"
+    }
+  }
+}
