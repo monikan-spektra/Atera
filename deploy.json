@@ -39,7 +39,11 @@
       "defaultValue": "yes"
     },
     "userEmailId": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": " ",
+      "metadata": {
+        "description": "Email ID of the user the lab is launched for, from the parameter file using GET-USER-EMAIL-ID"
+      }
     },
     "demoUserAlias": {
       "type": "string",
