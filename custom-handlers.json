@@ -1,0 +1,44 @@
+{
+  "AutoPasswordGeneration": true,
+  "Users": [
+    {
+      "FirstName": "Atera",
+      "LastName": "User1",
+      "UPNPrefix": "atera1",
+      "GlobalAdmin": false,
+      "UserLicenses": [
+        "3451a3b0-8cda-44a7-bad7-c30be81c4aaa"
+      ]
+    },
+    {
+      "FirstName": "Atera",
+      "LastName": "User2",
+      "UPNPrefix": "atera2",
+      "GlobalAdmin": false
+    },
+    {
+      "FirstName": "Atera",
+      "LastName": "User3",
+      "UPNPrefix": "atera3",
+      "GlobalAdmin": false
+    },
+    {
+      "FirstName": "Atera",
+      "LastName": "User4",
+      "UPNPrefix": "atera4",
+      "GlobalAdmin": false
+    },
+    {
+      "FirstName": "Atera",
+      "LastName": "User5",
+      "UPNPrefix": "atera5",
+      "GlobalAdmin": false
+    }
+  ],
+  "Licenses": [
+    {
+      "offerId": "3451a3b0-8cda-44a7-bad7-c30be81c4aaa",
+      "quantity": 1
+    }
+  ]
+}
