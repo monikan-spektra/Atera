@@ -3,7 +3,7 @@
   "Users": [
     {
       "FirstName": "Atera",
-      "LastName": "User1",
+      "LastName": "01",
       "UPNPrefix": "atera1",
       "GlobalAdmin": false,
       "UserLicenses": [
@@ -12,27 +12,31 @@
     },
     {
       "FirstName": "Atera",
-      "LastName": "User2",
+      "LastName": "02",
       "UPNPrefix": "atera2",
-      "GlobalAdmin": false
+      "GlobalAdmin": false,
+      "UserLicenses": []
     },
     {
       "FirstName": "Atera",
-      "LastName": "User3",
+      "LastName": "03",
       "UPNPrefix": "atera3",
-      "GlobalAdmin": false
+      "GlobalAdmin": false,
+      "UserLicenses": []
     },
     {
       "FirstName": "Atera",
-      "LastName": "User4",
+      "LastName": "04",
       "UPNPrefix": "atera4",
-      "GlobalAdmin": false
+      "GlobalAdmin": false,
+      "UserLicenses": []
     },
     {
       "FirstName": "Atera",
-      "LastName": "User5",
+      "LastName": "05",
       "UPNPrefix": "atera5",
-      "GlobalAdmin": false
+      "GlobalAdmin": false,
+      "UserLicenses": []
     }
   ],
   "Licenses": [
